@@ -1,6 +1,6 @@
 # Personal and programmable YouTube algorithm, dashboard and knowledge graph visualisation and tooling #
 
-I have had it with the unintelligent, unprogrammable, timewasting blackbox that is the YouTube recommendation algorithm. It does not furnish my requirements. This project is to create a personal workaround. The project is a fork of the formative work in Python done by Chris Lovejoy, refer [post on Chris' weblog](https://chrislovejoy.me/youtube-algorithm). My project goals are different to Chris' as may be garnered from my [project_weblog](/project_weblog.md). Given the explosion of GenAI generated content on YouTube, the lion's share of which I consider signal noise, I need a way to actively filter out this guff and excavate and foreground what I value.
+I have had it with the unintelligent, unprogrammable, timewasting blackbox that is the YouTube recommendation algorithm. It does not furnish my requirements. This project is to create a personal workaround. The project is a fork of the formative work in Python done by Chris Lovejoy, refer [post on Chris' weblog](https://chrislovejoy.me/youtube-algorithm). My project goals are different to Chris' as may be garnered from my [project_weblog](/project_weblog/project_weblog.md). Given the explosion of GenAI generated content on YouTube, the lion's share of which I consider signal noise, I need a way to actively filter out this guff and excavate and foreground what I value.
 
 
 
