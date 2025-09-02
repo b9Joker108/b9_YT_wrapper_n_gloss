@@ -1,7 +1,10 @@
-# Valuable-YouTube-Video-Finder
+# Personal and programmable YouTube algorithm, dashboard and knowledge graph visualisation and tooling #
 
-## The project
-The purpose of this project is to enable users to find valuable YouTube videos of their interest independent of YouTube's recommendation system. For a more detailed explanation of the project, it's purpose and how it was made, see this [post on weblog](https://chrislovejoy.me/youtube-algorithm).
+I have had it with the unintelligent, unprogrammable, timewasting blackbox that is the YouTube recommendation algorithm. It does not furnish my requirements. This project is to create a personal workaround. The project is a fork of the formative work in Python done by Chris Lovejoy, refer [post on Chris' weblog](https://chrislovejoy.me/youtube-algorithm). My project goals are different to Chris' as may be garnered from my projects weblog.  
+
+
+
+# Following is from README.md of Chris' project
 
 ## Setup
 
