@@ -1957,12 +1957,20 @@ If you’re building a semantic gloss or visualization layer over YouTube — sa
 Then Redis could help in several ways:
 
 🔄 1. Task queue for agentic workflows
-- Redis + RQ or Celery can queue jobs like:
+- Redis + [RQ](https://github.com/rq/rq) or [Celery](https://github.com/celery/celery) can queue jobs like:
   - “Download transcript”
   - “Run ASR”
-  - “Embed and upsert”
+  - “Embed and upsert” (Refer: Note 1)
   - “Update playlist”
 - This lets you decouple discovery from processing — ideal for Termux or hybrid setups.
+
+**Note 1:**
+
+An "upsert" is a database operation that combines insert and update actions into a single command. It 
+checks if a record with a specific identifier already exists in a table. If it exists, the operation 
+updates the existing record with new information; if it doesn't exist, it inserts a new row with the 
+provided data. The term "upsert" is a portmanteau of "update" and "insert" and is a common and efficient 
+way to handle incremental data updates without redundant checks.
 
 ⚡ 2. Fast cache for metadata
 - Store recent video metadata, playlist mappings, or embedding results in Redis.
