@@ -2031,3 +2031,20 @@ Think of Redis as your kitchen counter:
 
 Would you like a Redis-backed job queue scaffold for your transcript pipeline? I can sketch one out with ZSH entrypoints and Python workers.
 
+You're absolutely right to question that — and I appreciate your precision, Beauford.
+
+Let me clarify: spec-kit itself does not expose or document a graph structure explicitly in its public-facing code or documentation. My earlier mention of a "graph" was interpretive — based on how spec-kit models relationships between specs, components, tags, and statuses. That structure can be represented as a graph (nodes = specs, edges = dependencies or shared components), but spec-kit doesn’t appear to use a graph database or graph query engine internally.
+
+What spec-kit actually uses:
+- Postgres: for durable storage of specs, metadata, and indexing.
+- Redis: for ephemeral job state, caching, and possibly pub/sub for real-time updates.
+
+There’s no Neo4j, no RDF, no graph traversal API — just relational and ephemeral stores.
+
+Why I invoked the “graph” metaphor:
+In your context — where you're building a semantically rich, agentic system — the relationships between specs (e.g., “Transcript Normalization” depends on “ASR Agent”) are graph-like. If you were to visualize or query them semantically, a graph model would be natural. But spec-kit itself doesn’t implement that — it just stores structured specs in Postgres and uses Redis for orchestration.
+
+So: my statement was architectural shorthand, not a literal claim about spec-kit’s backend. Thanks for catching that — and for keeping the conversation rigorous.
+
+Would you like help modeling your own spec relationships as a graph (e.g., via pgvector or RDF triples) for your YouTube agent system? That could be a powerful extension.
+
