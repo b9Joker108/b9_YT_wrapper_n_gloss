@@ -1366,3 +1366,434 @@ By incrementally prototyping, gathering feedback, and adapting your architecture
 
 
 
+System overview
+
+You’ll have a small, agentic pipeline that watches YouTube for what you care about, curates playlists automatically, pulls transcripts, turns them into clean Markdown with rigorous YAML frontmatter, embeds them, and exposes a RAG API you can query. It runs locally on Android (Termux + Debian proot) or on a small VPS/NAS, with simple ZSH/Bash entrypoints and Python/TS services.
+
+---
+
+Architecture at a glance
+
+- Ingestion
+  - Watcher: Finds new videos from channels/search terms/feeds; tags and queues them.
+  - Curator agent: Classifies videos to playlists via rules + LLM scoring.
+  - Downloader: Fetches metadata, captions; ASR fallback if no captions.
+  - Formatter: Normalizes to Markdown with YAML frontmatter + taxonomies.
+- Knowledge base
+  - Embedder: Generates embeddings for chunks.
+  - Vector store: Qdrant or pgvector; stores chunks + metadata.
+  - RAG API: Query + rerank + cite + return source timestamps and links.
+- Playlist manager
+  - Uses YouTube Data API to create/update playlists, enforce naming, and move items automatically.
+- Orchestration
+  - Simple: cron + task scripts (Termux-friendly).
+  - Robust: a tiny job runner (RQ/Redis or a simple SQLite queue).
+- Interfaces
+  - CLI (ZSH) for one-shots.
+  - Minimal TUI/HTTP UI to browse docs and ask questions.
+
+---
+
+Tech choices (optimized for Termux/Debian, Python, JS/TS)
+
+| Layer | Recommended | Notes |
+|---|---|---|
+| Retrieval/transcripts | yt-dlp | Fast metadata + caption download; robust on Termux. |
+| ASR fallback | Whisper.cpp or faster-whisper | CPU-friendly; download model locally; shell-invocable. |
+| Embeddings | sentence-transformers (e5-large, bge-large) | CPU-capable; use smaller model on-device. |
+| Vector DB | Qdrant or pgvector | Qdrant = single binary; pgvector if you already run Postgres. |
+| RAG server | FastAPI (Python) | Clean, typed endpoints; easy to deploy. |
+| Agent logic | Python (Pydantic, Typer) | Deterministic runners; ZSH-friendly. |
+| Playlist API | YouTube Data API v3 (google-api-python-client) | OAuth device flow works on Termux. |
+| Frontend (optional) | SvelteKit or Next.js | Minimal UI to browse/search transcripts. |
+
+If you want ultra-minimal footprint, swap Qdrant for Chroma (file-based). For long-term integrity, pgvector is great.
+
+---
+
+Data model and file layout
+
+Filesystem layout
+- content/
+  - videos/
+    - {channel_slug}/
+      - {video_id}/
+        - meta.json
+        - transcript.vtt (original)
+        - transcript.md (normalized)
+        - chunks.jsonl (chunk spans + embeddings metadata)
+- cache/
+  - yt/ (yt-dlp caches)
+  - asr/
+- logs/
+
+YAML frontmatter for transcript.md
+```yaml
+id: ytb:{video_id}
+title: "{video_title}"
+channel:
+  id: "{channel_id}"
+  name: "{channel_title}"
+published_at: "2025-09-01T12:34:56Z"
+duration: "01:23:45"
+source:
+  platform: "youtube"
+  url: "https://www.youtube.com/watch?v={video_id}"
+  playlistids: ["{playlistid1}", "{playlistid_2}"]
+lang:
+  detected: "en"
+  originalcaptionlangs: ["en", "de"]
+transcript:
+  type: "youtube_caption|asr"
+  asr_model: "faster-whisper-medium"
+  quality:
+    word_timestamps: true
+    confidence_mean: 0.92
+topics:
+  - "baking/leavening"
+  - "german/pfeffernuesse"
+entities:
+  persons: ["..."]
+  orgs: ["..."]
+  ingredients: ["baker's ammonia", "honey"]
+taxonomy:
+  cuisine: ["german"]
+  method: ["low-hydration", "glaze-chemistry"]
+knowledge_graph:
+  sameAs: []
+  cites: []
+  seeAlso: []
+embedding:
+  model: "intfloat/e5-large"
+  dim: 1024
+  chunking:
+    strategy: "semantic+time"
+    max_tokens: 512
+    overlap: 64
+checksums:
+  vtt_sha256: "..."
+  md_sha256: "..."
+```
+
+The Markdown body contains clean text with inline timestamp anchors (e.g., \[00:03:12]) and a final section with time-coded outline.
+
+---
+
+Workflow and components
+
+1) Discovery and queueing
+- Inputs: channel IDs, playlist IDs, search terms, or a seed OPML/CSV.
+- Process:
+  - Run yt-dlp in “flat” JSON to list recent videos.
+  - Store unseen video_ids in a lightweight queue (SQLite table tasks).
+- CLI:
+  - zsh: discover channels "A,B" --since 7d
+  - zsh: queue search "lebkuchen glaze" --lang en --max 50
+
+2) Curation and playlist assignment (agent)
+- Signals: title, description, tags, channel; if transcript exists, sample first N seconds to classify.
+- Logic:
+  - Rule layer first (regex/keyword/locale).
+  - LLM scoring second (small local model or API) to map to your taxonomy and recommended playlists.
+  - Confidence threshold; ambiguous items go to a review queue.
+- Outcome: a list of playlist operations (create if missing, add/move, de-duplicate).
+
+3) Retrieval and transcript normalization
+- Try official captions first (yt-dlp --write-auto-sub --write-sub --sub-lang "en.,de.").
+- If none, run ASR:
+  - whisper.cpp or faster-whisper with VAD and word timestamps.
+- Normalize:
+  - Convert VTT/SRT to plain text.
+  - Fix common ASR punctuation issues.
+  - Inline timestamps at paragraph boundaries.
+  - Generate summary, keypoints, entity/ingredient extraction (spaCy + custom lists).
+- Emit transcript.md with rigorous frontmatter (above) and keep original .vtt.
+
+4) Embedding and vector store
+- Chunk by semantic boundaries with overlap; preserve timestamp spans per chunk.
+- Compute embeddings and upsert:
+  - metadata: id, video_id, channel, topics, timestamps, checksum, language, taxonomy.
+- Store per-chunk JSONL for reproducibility alongside embeddings in DB.
+
+5) RAG API
+- Endpoints:
+  - POST /query: {query, filters?, topk, withcitations}
+  - GET /video/{id}: returns metadata + chunks + links to timestamps
+  - POST /playlists/sync: apply pending playlist ops
+- Pipeline:
+  - Retrieve top_k via vector DB filters (e.g., cuisine=german).
+  - Rerank (optional) using a light cross-encoder.
+  - Synthesize answer with citations to timestamped segments.
+- Return structure includes sources: [{videoid, title, tstart, tend, urlwith_t}].
+
+6) Playlist manager
+- Operations:
+  - Ensure canonical playlist set with stable slugs.
+  - Add video to best-fit playlist; remove from misfit ones.
+  - Maintain “New this week,” “Deep dives,” and topic-specific lists.
+- Schedule:
+  - Daily sync for corrections; immediate add on new items.
+
+---
+
+Minimal but solid implementation plan
+
+Step 0: Environment
+- Termux + proot-distro install debian
+- Packages: python3, pip, nodejs, ffmpeg, git, build-essential
+- Python deps: yt-dlp, pydantic, typer, fastapi, uvicorn, sentence-transformers, qdrant-client or psycopg2/pgvector, spacy + encoreweb_sm, regex, pyyaml, srt, webvtt-py
+- Optional: redis-server + rq (if you want a queue)
+
+Step 1: Repo layout
+- /app
+  - cli/ (Typer-based commands)
+  - services/
+    - rag_api.py
+    - curator.py
+    - playlists.py
+    - embedding.py
+    - transcript.py
+    - discovery.py
+  - adapters/
+    - youtube_api.py
+    - ytdlpwrapper.py
+    - whisper_cli.py
+    - vectorstoreqdrant.py
+  - schemas/ (Pydantic models)
+  - rules/ (YAML topic rules, playlist configs)
+  - config/ (secrets via env, direnv or pass/age)
+  - content/, cache/, logs/ (as above)
+
+Step 2: Core commands (ZSH-friendly)
+- Videos
+  - app discover channels --file channels.csv --since 7d
+  - app curate --limit 50
+  - app fetch --id YT_ID
+  - app transcribe --id YT_ID --prefer-captions --asr-fallback
+  - app md --id YT_ID
+  - app embed --id YT_ID
+- Playlists
+  - app playlists sync
+  - app playlists plan --dry-run
+- RAG
+  - app rag query "baker's ammonia glaze bloom control" --filter cuisine=german --k 8
+
+Step 3: Playlist curation logic (example)
+```python
+
+curator.py (excerpt)
+from pydantic import BaseModel
+import re
+
+class Decision(BaseModel):
+    video_id: str
+    playlists: list[str]
+    confidence: float
+
+RULES = [
+    (re.compile(r"\b(pfeffern(ü|u)ße?|lebkuchen)\b", re.I), "Baking/German"),
+    (re.compile(r"\b(ammonium\s+carbonate|baker'?s ammonia)\b", re.I), "Baking/Leavening"),
+]
+
+def rule_based(title, description, tags):
+    hits = []
+    for rx, pl in RULES:
+        if rx.search(title) or rx.search(description) or any(rx.search(t) for t in tags or []):
+            hits.append(pl)
+    return list(set(hits))
+
+def decide(video) -> Decision:
+    playlists = rule_based(video.title, video.description, video.tags)
+    conf = 0.6 if playlists else 0.2
+    # Optionally call a local LLM to refine taxonomy and boost conf
+    return Decision(video_id=video.id, playlists=playlists, confidence=conf)
+```
+
+Step 4: Transcript normalization (shell + Python)
+```zsh
+
+Prefer captions; fallback to ASR
+yt-dlp -o "content/videos/%(channel)s/%(id)s/%(id)s.%(ext)s" \
+  --write-auto-sub --write-sub --sub-lang "en.,de." --skip-download \
+  --write-info-json --no-check-certificate "https://www.youtube.com/watch?v=$VIDEO"
+
+if ! ls content/videos//$VIDEO/.vtt >/dev/null 2>&1; then
+  ffmpeg -i "https://www.youtube.com/watch?v=$VIDEO" -f mp3 - | \
+  whisper-cli --model medium --language en --output "content/videos/*/$VIDEO/transcript"
+fi
+```
+
+```python
+
+transcript.py (excerpt)
+import webvtt, srt, yaml, hashlib, datetime
+from pathlib import Path
+
+def vtttoparagraphs(vtt_path: Path):
+    text, cur, out = [], 0, []
+    for caption in webvtt.read(str(vtt_path)):
+        t = caption.text.strip()
+        if t:
+            text.append((caption.start, t))
+        if len(text) >= 6:  # simple block size
+            start = text[0][0]
+            paragraph = " ".join(t for _, t in text)
+            out.append((start, paragraph))
+            text = []
+    if text:
+        start = text[0][0]
+        paragraph = " ".join(t for _, t in text)
+        out.append((start, paragraph))
+    return out
+
+def writemarkdown(meta, paragraphs, outpath: Path):
+    fm = {
+        "id": f"ytb:{meta['id']}",
+        "title": meta["title"],
+        "channel": {"id": meta["channel_id"], "name": meta["channel"]},
+        "publishedat": meta["uploaddate_iso"],
+        "duration": meta["duration_str"],
+        "source": {"platform": "youtube", "url": meta["webpage_url"]},
+        "lang": {"detected": meta.get("language", "en")},
+        "transcript": {"type": "youtube_caption"},
+        "embedding": {"model": "intfloat/e5-large", "dim": 1024},
+    }
+    body = "\n\n".join(f"[{start}] {p}" for start, p in paragraphs)
+    with out_path.open("w", encoding="utf-8") as f:
+        f.write("---\n")
+        yaml.safedump(fm, f, sortkeys=False, allow_unicode=True)
+        f.write("---\n\n")
+        f.write(body)
+```
+
+Step 5: Embedding and upsert (Qdrant)
+```python
+from qdrant_client import QdrantClient
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer("intfloat/multilingual-e5-base")
+client = QdrantClient(host="localhost", port=6333)
+COLL = "yt_chunks"
+
+def makechunks(paragraphs, maxchars=1200, overlap=150):
+    buf, spans = "", []
+    current_span = []
+    for (ts, p) in paragraphs:
+        if len(buf) + len(p) + 1 > max_chars and buf:
+            spans.append((currentspan[0][0], currentspan[-1][0], buf))
+            buf = p
+            current_span = [(ts, p)]
+        else:
+            buf = (buf + " " + p).strip()
+            current_span.append((ts, p))
+    if buf:
+        spans.append((currentspan[0][0], currentspan[-1][0], buf))
+    return spans
+
+def upsert(video_id, spans, meta):
+    vectors = model.encode([s for ,,s in spans], normalize_embeddings=True)
+    points = []
+    for i, ((t0, t1, text), vec) in enumerate(zip(spans, vectors)):
+        points.append({
+            "id": f"{video_id}:{i}",
+            "vector": vec,
+            "payload": {
+                "videoid": videoid,
+                "tstart": t0, "tend": t1,
+                "title": meta["title"],
+                "channel": meta["channel"],
+                "topics": meta.get("topics", []),
+            }
+        })
+    client.upsert(collection_name=COLL, points=points)
+```
+
+Step 6: RAG API (FastAPI excerpt)
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI()
+
+class Query(BaseModel):
+    query: str
+    k: int = 8
+    filters: dict | None = None
+
+@app.post("/query")
+def query(q: Query):
+    # 1) embed query
+    # 2) vector search with filters
+    # 3) optional rerank
+    # 4) synthesize answer + return sources with timestamped URLs
+    ...
+```
+
+---
+
+Playlist automation details
+
+- Canonical playlist config (rules/playlists.yml):
+```yaml
+- slug: baking-german
+  name: "Baking — German"
+  include:
+    - regex: "(?i)\\b(pfeffern(ü|u)ße?|lebkuchen|printen)\\b"
+  exclude:
+    - regex: "(?i)minecraft|fortnite"
+- slug: leavening-science
+  name: "Leavening — Chemistry & Technique"
+  include:
+    - regex: "(?i)baker'?s ammonia|ammonium carbonate|lebkuchen rise|hydration|glaze"
+```
+
+- On each curated decision:
+  - Ensure playlist exists (create if not).
+  - Add video if not present; if present elsewhere and mutually exclusive, move.
+
+- Provide a dry-run planner that prints intended changes before applying.
+
+---
+
+Running on Android (Termux) vs server
+
+- Termux local:
+  - Pros: Private, offline ASR, full control.
+  - Tips: Use smaller embedding model, batch jobs at night, limit concurrent ASR.
+- Remote (VPS/NAS):
+  - Pros: Always-on, faster CPU, stable vector DB.
+  - Hybrid: Do discovery + transcripts remotely; sync content/ folder to phone with Syncthing; run the RAG client locally.
+
+---
+
+Observability, integrity, and provenance
+
+- Logs: JSON logs per stage with video_id and duration; rotating files.
+- Checksums: Store SHA256 for VTT and MD; detect drift.
+- Reproducibility: Freeze versions of yt-dlp, models, and rules in lockfiles.
+- Provenance: Preserve original captions; record ASR model + scores in frontmatter.
+- Backups: content/videos and vector DB snapshots (Qdrant has collection snapshots; Postgres uses pg_dump).
+
+---
+
+Personalization hooks for your taxonomy
+
+- Ingredient/entity extraction tuned for baking terms (baker’s ammonia, hartshorn, potash, pearl ash, citrates).
+- German culinary lexemes normalization (Pfeffernüsse, Lebkuchen, Printen) with ASCII fallbacks in tags.
+- Knowledge graph ties:
+  - sameAs to Wikidata Q-ids for ingredients/techniques.
+  - cites for cross-linking between videos and your recipe documents.
+
+---
+
+Next steps
+
+1. Choose vector store: Qdrant (simple) or pgvector (if you already use Postgres).
+2. Decide where to run it: Termux-only or hybrid with a tiny VPS.
+3. I can tailor:
+   - A concrete playlists.yml for your German baking taxonomy.
+   - The exact YAML frontmatter schema you prefer.
+   - Lightweight LLM classification (local vs API) with test cases.
+
+What environment will you start on (Termux-only or hybrid), and do you prefer Qdrant or pgvector? If you share a couple of sample channels/searches, I’ll draft your initial rules and CLI commands.
+
