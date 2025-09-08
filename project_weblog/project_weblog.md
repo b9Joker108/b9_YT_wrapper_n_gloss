@@ -1797,3 +1797,123 @@ Next steps
 
 What environment will you start on (Termux-only or hybrid), and do you prefer Qdrant or pgvector? If you share a couple of sample channels/searches, I’ll draft your initial rules and CLI commands.
 
+To integrate GitHub’s spec-kit with your project — especially one like b9youtubevideo_finder that already has a Markdown-based project weblog — you’ll want to treat spec-kit as a structured documentation and planning layer that complements your codebase and agentic architecture.
+
+Here’s a step-by-step guide tailored to your repo and workflow:
+
+---
+
+🧩 What spec-kit does
+
+Spec-kit lets you define project specs in Markdown with embedded YAML frontmatter, then parse and analyze them programmatically. It’s ideal for:
+- Tracking features, tasks, and architecture decisions.
+- Linking specs to code, issues, or PRs.
+- Creating a reproducible knowledge graph of your project.
+
+---
+
+🛠️ Integration steps
+
+1. Install spec-kit CLI
+You can install it globally or add it to your repo:
+```bash
+npm install --save-dev @github/spec-kit
+```
+Or globally:
+```bash
+npm install -g @github/spec-kit
+```
+
+2. Create a /specs directory
+This is where your structured specs will live. You can migrate parts of your project_weblog.md into individual spec files.
+
+Example layout:
+```
+/specs
+  - ingestion.md
+  - transcript-normalization.md
+  - playlist-curation.md
+  - embedding.md
+  - rag-api.md
+```
+
+Each file should begin with YAML frontmatter like:
+```yaml
+title: Transcript Normalization
+status: implemented
+tags: [transcript, ASR, formatting]
+components: [transcript.py, whisper-cli]
+```
+
+Then follow with prose:
+```markdown
+
+Overview
+This spec defines how transcripts are retrieved, normalized, and formatted into Markdown with YAML frontmatter.
+
+Goals
+- Prefer YouTube captions when available.
+- Fallback to ASR using Whisper.
+- Normalize punctuation and timestamps.
+- Emit reproducible Markdown with metadata.
+
+Implementation
+See transcript.py and whisper_cli.py.
+```
+
+3. Link specs to your code
+In your code comments or README, you can reference specs like:
+```python
+
+Spec: specs/transcript-normalization.md
+```
+
+Or in your project_weblog.md, add backlinks:
+```markdown
+See Transcript Normalization Spec
+```
+
+4. Use spec-kit to analyze
+You can run:
+```bash
+spec-kit list
+spec-kit graph
+spec-kit validate
+```
+This gives you a structured overview of your specs, their status, and relationships.
+
+5. Automate with ZSH or CI
+You can add a ZSH alias or CI step to validate specs:
+```zsh
+alias speccheck="spec-kit validate specs/"
+```
+
+Or in GitHub Actions:
+```yaml
+- name: Validate specs
+  run: spec-kit validate specs/
+```
+
+---
+
+🧠 Best practices for your project
+
+Since your repo is agentic and modular, I recommend:
+- One spec per agent or service (e.g., curator-agent.md, playlist-manager.md)
+- Use components: to list relevant files.
+- Use tags: to group by domain (e.g., youtube, embedding, taxonomy)
+- Use status: to track progress (draft, implemented, deprecated)
+- Add links: to reference issues, PRs, or external docs.
+
+---
+
+🪄 Bonus: Spec-driven RAG
+
+You could even embed your specs into your vector DB alongside transcripts — giving your RAG system access to both video knowledge and project architecture. That way, you can ask:
+> “How does the curator agent decide playlist assignment?”
+
+And get answers from your own specs.
+
+---
+
+Would you like help converting your project_weblog.md into spec-kit format? I can draft the YAML frontmatter and split it into modular specs for you.
